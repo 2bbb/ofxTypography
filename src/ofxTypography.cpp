@@ -346,8 +346,43 @@ ofxTypoParagraphLayout ofxTypography::layoutParagraph(const std::string& utf8,
 
             if (para.height > 0.0f && colHeight > para.height) {
                 if (lastBreakIdx >= colStart) {
-                    ranges.push_back({ colStart, lastBreakIdx + 1, heightAtBreak });
-                    colStart = lastBreakIdx + 1;
+                    int breakAt = lastBreakIdx;
+
+                    // 行頭禁則: char after break must not start a column
+                    if (breakAt + 1 < n) {
+                        uint32_t nextCp = utf8Codepoint(utf8, allGlyphs[breakAt + 1].cluster);
+                        if (isKinsokuLineStart(nextCp) && breakAt > colStart)
+                            --breakAt;
+                    }
+                    // 行末禁則: break char must not end a column
+                    if (breakAt >= colStart) {
+                        uint32_t endCp = utf8Codepoint(utf8, allGlyphs[breakAt].cluster);
+                        if (isKinsokuLineEnd(endCp) && breakAt > colStart)
+                            --breakAt;
+                    }
+
+                    // recompute height for the adjusted range
+                    float usedHeight = 0.0f;
+                    for (int j = colStart; j <= breakAt; ++j) {
+                        float a = (allGlyphs[j].advance.y != 0.0f)
+                                ? -allGlyphs[j].advance.y : style.size;
+                        usedHeight += a;
+                    }
+
+                    ranges.push_back({ colStart, breakAt + 1, usedHeight });
+                    colStart = breakAt + 1;
+
+                    // 行頭禁則 post-fix: absorb leading forbidden chars into the previous column
+                    while (colStart < n
+                           && isKinsokuLineStart(utf8Codepoint(utf8, allGlyphs[colStart].cluster))
+                           && !ranges.empty()) {
+                        float a = (allGlyphs[colStart].advance.y != 0.0f)
+                                ? -allGlyphs[colStart].advance.y : style.size;
+                        ranges.back().end = colStart + 1;
+                        ranges.back().height += a;
+                        ++colStart;
+                    }
+
                     colHeight = 0.0f;
                     for (int j = colStart; j <= i; ++j) {
                         float a = (allGlyphs[j].advance.y != 0.0f)
