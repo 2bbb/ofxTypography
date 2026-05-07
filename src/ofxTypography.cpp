@@ -314,6 +314,7 @@ ofxTypoParagraphLayout ofxTypography::layoutParagraph(const std::string& utf8,
         std::vector<ofxTypoGlyph> allGlyphs =
             shapeSegmentsVertical(segs, faces, style, opts, totalHeight);
 
+
         int n = (int)allGlyphs.size();
 
         // Column breaking (height-based)
@@ -368,17 +369,19 @@ ofxTypoParagraphLayout ofxTypography::layoutParagraph(const std::string& utf8,
         result.setLineStride(colStride);
         result.setVertical(true);
 
+        // glyph0.pos.y = -offset.y (cursor_start=0 → pos = 0 - offset.y)
+        // cursor_at_range_start = allGlyphs[cr.start].pos.y - glyph0.pos.y
+        // This assumes constant y_offset per font (true for a single CJK face).
+        float glyph0PosY = allGlyphs[0].pos.y;
+
         float maxHeight = 0.0f;
         for (auto& cr : ranges) {
             std::vector<ofxTypoGlyph> tg;
-            float cy = 0.0f;
+            float cursorAtStart = allGlyphs[cr.start].pos.y - glyph0PosY;
             for (int i = cr.start; i < cr.end; ++i) {
                 const auto& g = allGlyphs[i];
-                float advY = (g.advance.y != 0.0f) ? -g.advance.y : style.size;
-                // Re-accumulate y from column top; keep x offset from HarfBuzz
-                tg.push_back({ g.glyphId, { g.pos.x, cy - g.pos.y + allGlyphs[cr.start].pos.y },
+                tg.push_back({ g.glyphId, { g.pos.x, g.pos.y - cursorAtStart },
                                g.advance, g.cluster, g.faceIndex });
-                cy += advY;
             }
             maxHeight = std::max(maxHeight, cr.height);
             ofxTypoTextLayout colLayout;
@@ -455,6 +458,16 @@ ofxTypoParagraphLayout ofxTypography::layoutParagraph(const std::string& utf8,
                 int next = breakAt + 1;
                 while (next < n && isSpaceChar(utf8Codepoint(utf8, allGlyphs[next].cluster))) ++next;
                 lineStart = next;
+
+                // 行頭禁則 post-fix: if lineStart lands on a forbidden char, absorb into prev line
+                while (lineStart < n
+                       && isKinsokuLineStart(utf8Codepoint(utf8, allGlyphs[lineStart].cluster))
+                       && !ranges.empty()) {
+                    ranges.back().end = lineStart + 1;
+                    ranges.back().width += allGlyphs[lineStart].advance.x;
+                    ++lineStart;
+                }
+
                 lineWidth = 0.0f;
                 for (int j = lineStart; j <= i; ++j) lineWidth += allGlyphs[j].advance.x;
                 lastBreakIdx = -1;
@@ -474,12 +487,12 @@ ofxTypoParagraphLayout ofxTypography::layoutParagraph(const std::string& utf8,
     float maxWidth = 0.0f;
     for (auto& lr : ranges) {
         std::vector<ofxTypoGlyph> tg;
-        float cx = 0.0f;
+        float originX = allGlyphs[lr.start].pos.x;
         for (int i = lr.start; i < lr.end; ++i) {
             const auto& g = allGlyphs[i];
-            tg.push_back({ g.glyphId, { cx + (g.pos.x - allGlyphs[lr.start].pos.x), g.pos.y },
+            // pos.x is already the absolute advance from text start; normalize to line start.
+            tg.push_back({ g.glyphId, { g.pos.x - originX, g.pos.y },
                            g.advance, g.cluster, g.faceIndex });
-            cx += g.advance.x;
         }
 
         float alignOff = 0.0f;
@@ -503,10 +516,10 @@ ofxTypoParagraphLayout ofxTypography::layoutParagraph(const std::string& utf8,
 
 void ofxTypography::draw(ofxTypoParagraphLayout& layout, float x, float y) {
     if (layout.isVertical()) {
-        float colX = 0.0f;
-        for (auto& col : layout.lines()) {
-            draw(col, x + colX, y);
-            colX += layout.getLineStride();
+        // Traditional Japanese vertical text: columns progress right → left
+        int n = (int)layout.lines().size();
+        for (int ci = 0; ci < n; ++ci) {
+            draw(layout.lines()[ci], x - ci * layout.getLineStride(), y);
         }
     } else {
         float lineY = 0.0f;
