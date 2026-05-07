@@ -4,6 +4,7 @@
 #include "include/core/SkCanvas.h"
 
 class ofxTypoFontFace;
+class ofxTypoTextLayout;
 
 class ofxTypoSkiaRenderer {
 public:
@@ -12,4 +13,8 @@ public:
               ofxTypoFontFace& face,
               float x, float y,
               const ofxTypoTextStyle& style);
+
+    void draw(SkCanvas* canvas,
+              const ofxTypoTextLayout& layout,
+              float x, float y);
 };
