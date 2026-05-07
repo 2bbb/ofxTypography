@@ -1,8 +1,11 @@
 #include "ofxTypoPdfExporter.h"
 #include "include/docs/SkPDFDocument.h"
+#include "include/core/SkPaint.h"
+#include "include/core/SkRect.h"
 #include "ofLog.h"
 
-bool ofxTypoPdfExporter::begin(const std::filesystem::path& path, float width, float height) {
+bool ofxTypoPdfExporter::begin(const std::filesystem::path& path, float width, float height,
+                                const ofColor& background) {
     end();
 
     stream_ = std::make_unique<SkFILEWStream>(path.c_str());
@@ -22,7 +25,14 @@ bool ofxTypoPdfExporter::begin(const std::filesystem::path& path, float width, f
     }
 
     canvas_ = doc_->beginPage(width, height);
-    return canvas_ != nullptr;
+    if (!canvas_) return false;
+
+    if (background.a > 0) {
+        SkPaint bg;
+        bg.setColor(SkColorSetARGB(background.a, background.r, background.g, background.b));
+        canvas_->drawRect(SkRect::MakeWH(width, height), bg);
+    }
+    return true;
 }
 
 SkCanvas* ofxTypoPdfExporter::nextPage(float width, float height) {
