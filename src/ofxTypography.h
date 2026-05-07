@@ -5,6 +5,7 @@
 #include "ofxTypoTextLayout.h"
 #include "ofxTypoParagraphStyle.h"
 #include "ofxTypoParagraphLayout.h"
+#include "ofxTypoPdfExporter.h"
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -32,6 +33,10 @@ public:
                                             const ofxTypoTextStyle& style,
                                             const ofxTypoParagraphStyle& para = {});
     void draw(ofxTypoParagraphLayout& layout, float x, float y);
+
+    // Phase 8: PDF export — draw layout onto a PDF canvas
+    void drawToPdf(ofxTypoPdfExporter& pdf, ofxTypoTextLayout& layout, float x, float y);
+    void drawToPdf(ofxTypoPdfExporter& pdf, ofxTypoParagraphLayout& layout, float x, float y);
 
 private:
     std::unordered_map<std::string, std::shared_ptr<ofxTypoFontFace>>               fonts_;

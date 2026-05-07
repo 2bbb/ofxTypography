@@ -2,6 +2,7 @@
 #include "ofxTypoFontFace.cpp"
 #include "ofxTypoSkiaRenderer.cpp"
 #include "ofxTypoTextLayout.cpp"
+#include "ofxTypoPdfExporter.cpp"
 
 #include "ofxTypography.h"
 #include "ofxTypoSkiaRenderer.h"
@@ -47,6 +48,58 @@ static bool isLineBreakOpportunity(uint32_t cp) {
 static bool isSpaceChar(uint32_t cp)   { return cp == 0x20 || cp == 0x09; }
 static bool isForcedBreak(uint32_t cp) { return cp == 0x0A || cp == 0x0D; }
 
+// ── Phase 9: 禁則処理 ─────────────────────────────────────────────────────────
+
+// 行頭禁則: these characters must not appear at the start of a line
+static bool isKinsokuLineStart(uint32_t cp) {
+    switch (cp) {
+        // Closing brackets / punctuation
+        case 0x3001: case 0x3002:  // 、。
+        case 0xFF0C: case 0xFF0E:  // ，．
+        case 0x30FB: case 0xFF65:  // ・
+        case 0xFF1A: case 0xFF1B:  // ：；
+        case 0xFF1F: case 0xFF01:  // ？！
+        case 0x3009: case 0x300B:  // 〉》
+        case 0x300D: case 0x300F:  // 」』
+        case 0x3011: case 0x3015:  // 】〕
+        case 0xFF09: case 0xFF3D:  // ）］
+        case 0xFF5D:               // ｝
+        case 0x2026: case 0x2025:  // …‥
+        case 0x30FC:               // ー (long vowel — should stay with preceding kana)
+        case 0x2019: case 0x201D:  // '' ""  (closing quotes)
+            return true;
+        default: break;
+    }
+    // Small kana: ぁぃぅぇぉっゃゅょゎ / ァィゥェォッャュョヮ
+    if (cp >= 0x3041 && cp <= 0x3043) return true;  // ぁぃぅ
+    if (cp >= 0x3045 && cp <= 0x3049) return true;  // ぇぉ... (odd codepoints)
+    if (cp == 0x3063) return true;   // っ
+    if (cp >= 0x3083 && cp <= 0x3087) return true;  // ゃゅょ
+    if (cp == 0x308E) return true;   // ゎ
+    if (cp >= 0x30A1 && cp <= 0x30A3) return true;  // ァィゥ
+    if (cp >= 0x30A5 && cp <= 0x30A9) return true;  // ェォ...
+    if (cp == 0x30C3) return true;   // ッ
+    if (cp >= 0x30E3 && cp <= 0x30E7) return true;  // ャュョ
+    if (cp == 0x30EE) return true;   // ヮ
+    if (cp == 0x30F5 || cp == 0x30F6) return true;  // ヵヶ
+    return false;
+}
+
+// 行末禁則: these characters must not appear at the end of a line
+static bool isKinsokuLineEnd(uint32_t cp) {
+    switch (cp) {
+        case 0x3008: case 0x300A:  // 〈《
+        case 0x300C: case 0x300E:  // 「『
+        case 0x3010: case 0x3014:  // 【〔
+        case 0xFF08: case 0xFF3B:  // （［
+        case 0xFF5B:               // ｛
+        case 0x2018: case 0x201C:  // '' ""  (opening quotes)
+            return true;
+        default: break;
+    }
+    return false;
+}
+
 // ── Fallback segmentation ─────────────────────────────────────────────────────
 
 struct FaceSegment { std::string text; int faceIndex; size_t byteStart; };
@@ -77,7 +130,7 @@ static std::vector<FaceSegment> segmentByFace(
     return segs;
 }
 
-// Shape segments and return combined glyph vector; cx_out receives final x
+// Shape segments (LTR/RTL); cx_out receives total x advance
 static std::vector<ofxTypoGlyph> shapeSegments(
     const std::vector<FaceSegment>& segs,
     const std::vector<std::shared_ptr<ofxTypoFontFace>>& faces,
@@ -102,6 +155,36 @@ static std::vector<ofxTypoGlyph> shapeSegments(
         }
     }
     cx_out = cx;
+    return glyphs;
+}
+
+// Shape segments for TTB vertical text; cy_out receives total y advance
+static std::vector<ofxTypoGlyph> shapeSegmentsVertical(
+    const std::vector<FaceSegment>& segs,
+    const std::vector<std::shared_ptr<ofxTypoFontFace>>& faces,
+    const ofxTypoTextStyle& style,
+    const ofxHbShapeOptions& opts,
+    float& cy_out)
+{
+    std::vector<ofxTypoGlyph> glyphs;
+    float cy = 0.0f;
+    for (const auto& seg : segs) {
+        auto& face = *faces[seg.faceIndex];
+        ofxHbGlyphRun run = ofxHbShaper().shape(seg.text, face.getHbFont(style.size), opts);
+        for (const auto& g : run.glyphs) {
+            // HarfBuzz TTB: y_advance is negative (moving down in font coords = +y in screen)
+            float advY = (g.advance.y != 0.0f) ? -g.advance.y : style.size;
+            glyphs.push_back({
+                g.glyphId,
+                { g.offset.x, cy - g.offset.y },
+                { g.advance.x, g.advance.y },
+                g.cluster + (uint32_t)seg.byteStart,
+                seg.faceIndex
+            });
+            cy += advY;
+        }
+    }
+    cy_out = cy;
     return glyphs;
 }
 
@@ -207,7 +290,7 @@ void ofxTypography::draw(ofxTypoTextLayout& layout, float x, float y) {
     surface_.draw(0, 0);
 }
 
-// ── Phase 5 ───────────────────────────────────────────────────────────────────
+// ── Phase 5 + Phase 9: paragraph layout ──────────────────────────────────────
 
 ofxTypoParagraphLayout ofxTypography::layoutParagraph(const std::string& utf8,
                                                        const ofxTypoTextStyle& style,
@@ -215,21 +298,113 @@ ofxTypoParagraphLayout ofxTypography::layoutParagraph(const std::string& utf8,
     auto faces = resolveFaces(style.font);
     if (faces.empty()) { ofLogError("ofxTypography") << "Font not found: " << style.font; return {}; }
 
+    // ── Phase 9: vertical (縦書き) path ───────────────────────────────────────
+    if (para.vertical) {
+        ofxHbShapeOptions opts {
+            style.language, style.script,
+            ofxHbTextDirection::TopToBottom,
+            style.features
+        };
+
+        auto segs = (faces.size() == 1)
+                  ? std::vector<FaceSegment>{{ utf8, 0, 0 }}
+                  : segmentByFace(utf8, faces);
+
+        float totalHeight = 0.0f;
+        std::vector<ofxTypoGlyph> allGlyphs =
+            shapeSegmentsVertical(segs, faces, style, opts, totalHeight);
+
+        int n = (int)allGlyphs.size();
+
+        // Column breaking (height-based)
+        struct ColRange { int start, end; float height; };
+        std::vector<ColRange> ranges;
+
+        int   colStart    = 0;
+        float colHeight   = 0.0f;
+        int   lastBreakIdx = -1;
+        float heightAtBreak = 0.0f;
+
+        for (int i = 0; i < n; ++i) {
+            uint32_t cp = utf8Codepoint(utf8, allGlyphs[i].cluster);
+
+            if (isForcedBreak(cp)) {
+                ranges.push_back({ colStart, i, colHeight });
+                colStart = i + 1; colHeight = 0.0f; lastBreakIdx = -1;
+                continue;
+            }
+
+            float advY = (allGlyphs[i].advance.y != 0.0f)
+                       ? -allGlyphs[i].advance.y : style.size;
+            colHeight += advY;
+
+            if (isLineBreakOpportunity(cp)) {
+                lastBreakIdx = i;
+                heightAtBreak = colHeight;
+            }
+
+            if (para.height > 0.0f && colHeight > para.height) {
+                if (lastBreakIdx >= colStart) {
+                    ranges.push_back({ colStart, lastBreakIdx + 1, heightAtBreak });
+                    colStart = lastBreakIdx + 1;
+                    colHeight = 0.0f;
+                    for (int j = colStart; j <= i; ++j) {
+                        float a = (allGlyphs[j].advance.y != 0.0f)
+                                ? -allGlyphs[j].advance.y : style.size;
+                        colHeight += a;
+                    }
+                    lastBreakIdx = -1;
+                } else {
+                    ranges.push_back({ colStart, i, colHeight - advY });
+                    colStart = i; colHeight = advY; lastBreakIdx = -1;
+                }
+            }
+        }
+        if (colStart < n) ranges.push_back({ colStart, n, colHeight });
+
+        // Build column layouts
+        float colStride = style.size * para.lineHeight;
+        ofxTypoParagraphLayout result;
+        result.setLineStride(colStride);
+        result.setVertical(true);
+
+        float maxHeight = 0.0f;
+        for (auto& cr : ranges) {
+            std::vector<ofxTypoGlyph> tg;
+            float cy = 0.0f;
+            for (int i = cr.start; i < cr.end; ++i) {
+                const auto& g = allGlyphs[i];
+                float advY = (g.advance.y != 0.0f) ? -g.advance.y : style.size;
+                // Re-accumulate y from column top; keep x offset from HarfBuzz
+                tg.push_back({ g.glyphId, { g.pos.x, cy - g.pos.y + allGlyphs[cr.start].pos.y },
+                               g.advance, g.cluster, g.faceIndex });
+                cy += advY;
+            }
+            maxHeight = std::max(maxHeight, cr.height);
+            ofxTypoTextLayout colLayout;
+            colLayout.init(std::move(tg), faces, style,
+                           ofRectangle(0, 0, style.size, cr.height));
+            result.addLine(std::move(colLayout));
+        }
+
+        result.setBounds(ofRectangle(0, 0,
+                                     colStride * (float)result.lines().size(),
+                                     maxHeight));
+        return result;
+    }
+
+    // ── Horizontal path (Phase 5 + Phase 9 kinsoku) ───────────────────────────
     ofxHbShapeOptions opts { style.language, style.script, {}, style.features };
 
-    // Shape entire text with fallback segmentation; cluster values map to original utf8
     auto segs = (faces.size() == 1)
               ? std::vector<FaceSegment>{{ utf8, 0, 0 }}
               : segmentByFace(utf8, faces);
     float totalWidth = 0.0f;
     std::vector<ofxTypoGlyph> allGlyphs = shapeSegments(segs, faces, style, opts, totalWidth);
 
-    // Store un-positioned advances for line-break scan (use allGlyphs[i].advance.x)
-    // Note: allGlyphs[i].pos.x is already accumulated; use it for splitting.
-
     int n = (int)allGlyphs.size();
 
-    // ── greedy line breaking on allGlyphs ─────────────────────────────────────
+    // Greedy line breaking with kinsoku
     struct LineRange { int start, end; float width; };
     std::vector<LineRange> ranges;
 
@@ -243,9 +418,7 @@ ofxTypoParagraphLayout ofxTypography::layoutParagraph(const std::string& utf8,
 
         if (isForcedBreak(cp)) {
             ranges.push_back({ lineStart, i, lineWidth });
-            lineStart = i + 1;
-            lineWidth = 0.0f;
-            lastBreakIdx = -1;
+            lineStart = i + 1; lineWidth = 0.0f; lastBreakIdx = -1;
             continue;
         }
 
@@ -258,8 +431,28 @@ ofxTypoParagraphLayout ofxTypography::layoutParagraph(const std::string& utf8,
 
         if (para.width > 0.0f && lineWidth > para.width) {
             if (lastBreakIdx >= lineStart) {
-                ranges.push_back({ lineStart, lastBreakIdx + 1, widthAtBreak });
-                int next = lastBreakIdx + 1;
+                int breakAt = lastBreakIdx;
+
+                // Phase 9 kinsoku: 行頭禁則 — shift break back so forbidden char stays on line
+                if (breakAt + 1 < n) {
+                    uint32_t nextCp = utf8Codepoint(utf8, allGlyphs[breakAt + 1].cluster);
+                    if (isKinsokuLineStart(nextCp) && breakAt > lineStart) {
+                        // Absorb forbidden char onto current line by moving break back one
+                        breakAt--;
+                        widthAtBreak -= allGlyphs[breakAt + 1].advance.x;
+                    }
+                }
+                // Phase 9 kinsoku: 行末禁則 — forbidden char must not end the line
+                if (breakAt >= lineStart) {
+                    uint32_t endCp = utf8Codepoint(utf8, allGlyphs[breakAt].cluster);
+                    if (isKinsokuLineEnd(endCp) && breakAt > lineStart) {
+                        breakAt--;
+                        widthAtBreak -= allGlyphs[breakAt + 1].advance.x;
+                    }
+                }
+
+                ranges.push_back({ lineStart, breakAt + 1, widthAtBreak });
+                int next = breakAt + 1;
                 while (next < n && isSpaceChar(utf8Codepoint(utf8, allGlyphs[next].cluster))) ++next;
                 lineStart = next;
                 lineWidth = 0.0f;
@@ -267,15 +460,13 @@ ofxTypoParagraphLayout ofxTypography::layoutParagraph(const std::string& utf8,
                 lastBreakIdx = -1;
             } else {
                 ranges.push_back({ lineStart, i, lineWidth - allGlyphs[i].advance.x });
-                lineStart = i;
-                lineWidth = allGlyphs[i].advance.x;
-                lastBreakIdx = -1;
+                lineStart = i; lineWidth = allGlyphs[i].advance.x; lastBreakIdx = -1;
             }
         }
     }
     if (lineStart < n) ranges.push_back({ lineStart, n, lineWidth });
 
-    // ── build TextLayout per line ─────────────────────────────────────────────
+    // Build TextLayout per line
     float lineStride = style.size * para.lineHeight;
     ofxTypoParagraphLayout result;
     result.setLineStride(lineStride);
@@ -311,9 +502,44 @@ ofxTypoParagraphLayout ofxTypography::layoutParagraph(const std::string& utf8,
 }
 
 void ofxTypography::draw(ofxTypoParagraphLayout& layout, float x, float y) {
-    float lineY = 0.0f;
-    for (auto& line : layout.lines()) {
-        draw(line, x, y + lineY);
-        lineY += layout.getLineStride();
+    if (layout.isVertical()) {
+        float colX = 0.0f;
+        for (auto& col : layout.lines()) {
+            draw(col, x + colX, y);
+            colX += layout.getLineStride();
+        }
+    } else {
+        float lineY = 0.0f;
+        for (auto& line : layout.lines()) {
+            draw(line, x, y + lineY);
+            lineY += layout.getLineStride();
+        }
+    }
+}
+
+// ── Phase 8: PDF draw ─────────────────────────────────────────────────────────
+
+void ofxTypography::drawToPdf(ofxTypoPdfExporter& pdf,
+                               ofxTypoTextLayout& layout, float x, float y) {
+    SkCanvas* canvas = pdf.getCanvas();
+    if (!canvas || layout.glyphs().empty()) return;
+    ofxTypoSkiaRenderer().draw(canvas, layout, x, y);
+}
+
+void ofxTypography::drawToPdf(ofxTypoPdfExporter& pdf,
+                               ofxTypoParagraphLayout& layout, float x, float y) {
+    if (!pdf.isOpen()) return;
+    if (layout.isVertical()) {
+        float colX = 0.0f;
+        for (auto& col : layout.lines()) {
+            drawToPdf(pdf, col, x + colX, y);
+            colX += layout.getLineStride();
+        }
+    } else {
+        float lineY = 0.0f;
+        for (auto& line : layout.lines()) {
+            drawToPdf(pdf, line, x, y + lineY);
+            lineY += layout.getLineStride();
+        }
     }
 }
