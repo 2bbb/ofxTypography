@@ -4,17 +4,19 @@
 #include "include/core/SkRefCnt.h"
 #include <filesystem>
 #include <memory>
+#include <string>
 #include <unordered_map>
 
 class ofxTypoFontFace {
 public:
     bool load(const std::filesystem::path& path);
 
-    // Returns cached HbFont for the given size (key = size * 10, rounded)
-    ofxHbFont& getHbFont(float sizePixels);
-    sk_sp<SkTypeface> getSkTypeface() const { return skTypeface_; }
+    ofxHbFont&         getHbFont(float sizePixels);
+    sk_sp<SkTypeface>  getSkTypeface() const { return skTypeface_; }
 
-    bool isLoaded() const { return skTypeface_ != nullptr; }
+    bool        supports(uint32_t codepoint) const;
+    std::string getFamilyName() const;
+    bool        isLoaded() const { return skTypeface_ != nullptr; }
 
 private:
     std::shared_ptr<ofxHbFace> hbFace_;

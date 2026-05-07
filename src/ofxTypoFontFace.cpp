@@ -2,6 +2,7 @@
 #include "include/core/SkData.h"
 #include "include/core/SkFontMgr.h"
 #include "include/ports/SkFontMgr_data.h"
+#include "include/core/SkString.h"
 #include "ofLog.h"
 
 bool ofxTypoFontFace::load(const std::filesystem::path& path) {
@@ -32,4 +33,16 @@ ofxHbFont& ofxTypoFontFace::getHbFont(float sizePixels) {
         it = hbFontCache_.emplace(key, std::move(font)).first;
     }
     return *it->second;
+}
+
+bool ofxTypoFontFace::supports(uint32_t codepoint) const {
+    if (!skTypeface_) return false;
+    return skTypeface_->unicharToGlyph(static_cast<SkUnichar>(codepoint)) != 0;
+}
+
+std::string ofxTypoFontFace::getFamilyName() const {
+    if (!skTypeface_) return "";
+    SkString name;
+    skTypeface_->getFamilyName(&name);
+    return std::string(name.c_str());
 }
