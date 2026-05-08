@@ -9,7 +9,9 @@ bool ofxTypoPdfExporter::begin(const std::filesystem::path& path, float width, f
                                 const ofColor& background) {
     end();
 
-    stream_ = std::make_unique<SkFILEWStream>(path.c_str());
+    // path.c_str() returns const wchar_t* on Windows; SkFILEWStream only accepts
+    // const char*, so convert via string() which uses the native 8-bit encoding.
+    stream_ = std::make_unique<SkFILEWStream>(path.string().c_str());
     if (!stream_->isValid()) {
         ofLogError("ofxTypoPdfExporter::begin") << "Cannot open file: " << path;
         stream_.reset();
