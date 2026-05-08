@@ -8,6 +8,11 @@ meta:
 common:
 	ADDON_INCLUDES = src
 	ADDON_DEPENDENCIES = ofxSkia ofxHarfBuzz
+	# ofxTypography.cpp is the unity-build entry for Xcode; exclude individual TUs from make
+	ADDON_SOURCES_EXCLUDE = src/ofxTypoFontFace.cpp
+	ADDON_SOURCES_EXCLUDE += src/ofxTypoSkiaRenderer.cpp
+	ADDON_SOURCES_EXCLUDE += src/ofxTypoTextLayout.cpp
+	ADDON_SOURCES_EXCLUDE += src/ofxTypoPdfExporter.cpp
 
 osx:
 

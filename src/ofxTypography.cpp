@@ -1,3 +1,10 @@
+// ofxTypography — unity-build entry point for Xcode.
+// make auto-discovers individual .cpp files via ADDON_SOURCES_EXCLUDE in addon_config.mk.
+#include "ofxTypoFontFace.cpp"
+#include "ofxTypoSkiaRenderer.cpp"
+#include "ofxTypoTextLayout.cpp"
+#include "ofxTypoPdfExporter.cpp"
+
 #include "ofxTypography.h"
 #include "ofxTypoSkiaRenderer.h"
 #include "ofxHbShaper.h"
