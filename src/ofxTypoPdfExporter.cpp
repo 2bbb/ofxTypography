@@ -1,5 +1,6 @@
 #include "ofxTypoPdfExporter.h"
 #include "include/docs/SkPDFDocument.h"
+#include "include/core/SkCanvas.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkRect.h"
 #include "ofLog.h"

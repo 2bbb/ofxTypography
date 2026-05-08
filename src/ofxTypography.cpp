@@ -1,9 +1,3 @@
-// unity includes
-#include "ofxTypoFontFace.cpp"
-#include "ofxTypoSkiaRenderer.cpp"
-#include "ofxTypoTextLayout.cpp"
-#include "ofxTypoPdfExporter.cpp"
-
 #include "ofxTypography.h"
 #include "ofxTypoSkiaRenderer.h"
 #include "ofxHbShaper.h"
