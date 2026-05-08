@@ -21,7 +21,10 @@ linux64:
 linuxaarch64:
 
 vs:
-	ADDON_CFLAGS = /utf-8
+	# /utf-8      : treat source files as UTF-8 (required for Japanese string literals)
+	# _ITERATOR_DEBUG_LEVEL=0 : match Release-built Skia/HarfBuzz static libs;
+	#               without this, Debug builds trigger LNK2038 mismatch.
+	ADDON_CFLAGS = /utf-8 /D_ITERATOR_DEBUG_LEVEL=0
 
 msys2:
 
