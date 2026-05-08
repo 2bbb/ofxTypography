@@ -21,6 +21,7 @@ linux64:
 linuxaarch64:
 
 vs:
+	ADDON_CFLAGS = /utf-8
 
 msys2:
 
